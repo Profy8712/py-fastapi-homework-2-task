@@ -68,12 +68,14 @@ async def list_movies(
         total_items=total_items,
     )
 
+
+
 @router.post("/", response_model=MovieDetailSchema, status_code=status.HTTP_201_CREATED)
 async def create_movie(
     movie_data: MovieCreateSchema,
     db: AsyncSession = Depends(get_db),
 ):
-    # Проверка на дубликат
+    # Проверка на дубликат фильма
     stmt = select(MovieModel).where(
         MovieModel.name == movie_data.name,
         MovieModel.date == movie_data.date
@@ -92,7 +94,11 @@ async def create_movie(
     if not country:
         country = CountryModel(code=movie_data.country, name=None)
         db.add(country)
-        await db.flush()  # Получить id
+        try:
+            await db.flush()
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(status_code=409, detail=f"Country with code '{movie_data.country}' already exists.")
 
     # Найти/создать жанры
     genres = []
@@ -103,7 +109,11 @@ async def create_movie(
         if not genre:
             genre = GenreModel(name=genre_name)
             db.add(genre)
-            await db.flush()
+            try:
+                await db.flush()
+            except IntegrityError:
+                await db.rollback()
+                raise HTTPException(status_code=409, detail=f"Genre '{genre_name}' already exists.")
         genres.append(genre)
 
     # Найти/создать актёров
@@ -115,7 +125,11 @@ async def create_movie(
         if not actor:
             actor = ActorModel(name=actor_name)
             db.add(actor)
-            await db.flush()
+            try:
+                await db.flush()
+            except IntegrityError:
+                await db.rollback()
+                raise HTTPException(status_code=409, detail=f"Actor '{actor_name}' already exists.")
         actors.append(actor)
 
     # Найти/создать языки
@@ -127,7 +141,11 @@ async def create_movie(
         if not lang:
             lang = LanguageModel(name=lang_name)
             db.add(lang)
-            await db.flush()
+            try:
+                await db.flush()
+            except IntegrityError:
+                await db.rollback()
+                raise HTTPException(status_code=409, detail=f"Language '{lang_name}' already exists.")
         languages.append(lang)
 
     # Создать фильм
@@ -145,11 +163,15 @@ async def create_movie(
         languages=languages,
     )
     db.add(movie)
-    await db.commit()
-    await db.refresh(movie)
-    await db.refresh(country)
-    # Жанры, актёры, языки подтянутся через joinedload (если включить)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="A movie with such parameters already exists.")
+
+    # refresh(country) больше не нужен
     return await get_movie_details(movie.id, db=db)
+
 
 @router.get("/{movie_id}/", response_model=MovieDetailSchema)
 async def get_movie_details(
